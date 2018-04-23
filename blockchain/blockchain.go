@@ -1,6 +1,6 @@
 package blockchain
 
-import "labrpc"
+import "../labrpc"
 import "sync"
 
 //
@@ -11,10 +11,17 @@ type Blockchain struct {
     peers          []*labrpc.ClientEnd // RPC end points of all peers
     me             int                 // this peer's index into peers[]
 
-    // Your code here for Blockchain peer related information.
+    chains         []Unitblock         // This represent the entire block chain
 }
 
 //
+// A GO Object representing a block
+//
+type Unitblock struct {
+    hash int //the hash value for the block
+    previousHash int // the previous hash
+    data string // data for the current block
+}
 // the tester calls Kill() when a Blockchain instance won't
 // be needed again. you are not required to do anything
 // in Kill(), but it might be convenient to (for example)
