@@ -21,6 +21,7 @@ type Unitblock struct {
     hash int //the hash value for the block
     previousHash int // the previous hash
     data string // data for the current block
+    index int // index of this block in the chain
 }
 // the tester calls Kill() when a Blockchain instance won't
 // be needed again. you are not required to do anything
