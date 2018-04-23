@@ -2,6 +2,7 @@ package blockchain
 
 import "../labrpc"
 import "sync"
+import "time"
 
 //
 // A Go object implementing a single Blockchain peer.
@@ -22,6 +23,7 @@ type Unitblock struct {
     previousHash int // the previous hash
     data string // data for the current block
     index int // index of this block in the chain
+    timestamp time.Time // timestamp of the block
 }
 // the tester calls Kill() when a Blockchain instance won't
 // be needed again. you are not required to do anything
