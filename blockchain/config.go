@@ -1,6 +1,6 @@
 package blockchain
 
-import "labrpc"
+import "../labrpc"
 import "sync"
 import "testing"
 import "runtime"

@@ -12,19 +12,11 @@ type Blockchain struct {
     peers          []*labrpc.ClientEnd // RPC end points of all peers
     me             int                 // this peer's index into peers[]
 
-    chains         []Unitblock         // This represent the entire block chain
+    chains         []Block         // This represent the entire block chain
+    commandChannel chan string     // Channel to listen to broadcast and download command
+    difficulty     int             // Difficulty level of the blockchain
 }
 
-//
-// A GO Object representing a block
-//
-type Unitblock struct {
-    hash int //the hash value for the block
-    previousHash int // the previous hash
-    data string // data for the current block
-    index int // index of this block in the chain
-    timestamp time.Time // timestamp of the block
-}
 // the tester calls Kill() when a Blockchain instance won't
 // be needed again. you are not required to do anything
 // in Kill(), but it might be convenient to (for example)
@@ -42,6 +34,8 @@ func (bc *Blockchain) createGenesisBlock() {
 
     // Your code to mine the genesis block.
     // It should be the first block mined by all blockchain peers on starting up.
+    block := Block{GENESIS_HASH, "", "first block", 0, time.Now()}
+    bc.chains = append(bc.chains, block)
 }
 
 //
@@ -115,15 +109,20 @@ func (bc *Blockchain) AddBlock(args *AddBlockArgs, reply *AddBlockReply) {
 // Invoked by tester to get blockchain length and last block's hash.
 //
 func (bc *Blockchain) GetState() (int, string) {
+    size := len(bc.chains)
 
-    var blockchainSize int
-    var lastBlockHash string
-
-    // Your code here
-
-    return blockchainSize, lastBlockHash
+    return size, bc.chains[size-1].hash
 }
 
+func (bc *Blockchain) Listen() {
+    for cmd := range bc.commandChannel {
+        if cmd == "Broadcast" {
+            bc.commandChannel <- "Done"
+        } else if cmd == "DownloadBlockchain"{
+            bc.commandChannel <- "Done"
+        }
+    }
+}
 //
 // the service or tester wants to create a Blockchain server. the ports
 // of all the Blockchain servers (including this one) are in peers[]. this
@@ -141,6 +140,10 @@ func Make(peers []*labrpc.ClientEnd, me int, difficulty int, command chan string
     bc.me = me
 
     // Your initialization code here
-
+    bc.difficulty = difficulty
+    bc.commandChannel = command
+    bc.chains = [] Block{}
+    bc.createGenesisBlock()
+    go bc.Listen()
     return bc
 }
