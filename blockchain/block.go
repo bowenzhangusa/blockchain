@@ -11,4 +11,5 @@ type Block struct {
 	data string // data for the current block
 	index int // index of this block in the chain
 	timestamp time.Time // timestamp of the block
+	nonce int // nonce of the block
 }

@@ -3,6 +3,12 @@ package blockchain
 import "../labrpc"
 import "sync"
 import "time"
+import (
+    "fmt"
+    "strings"
+    "crypto/sha1"
+    "encoding/base64"
+)
 
 //
 // A Go object implementing a single Blockchain peer.
@@ -34,7 +40,7 @@ func (bc *Blockchain) createGenesisBlock() {
 
     // Your code to mine the genesis block.
     // It should be the first block mined by all blockchain peers on starting up.
-    block := Block{GENESIS_HASH, "", "first block", 0, time.Now()}
+    block := Block{GENESIS_HASH, "", "first block", 0, time.Now(), 0}
     bc.chains = append(bc.chains, block)
 }
 
@@ -48,10 +54,15 @@ type CreateNewBlockArgs struct {
 
 type CreateNewBlockReply struct {
     // Your code here, if desired
+    success bool
 }
 
 func (bc *Blockchain) CreateNewBlock(args *CreateNewBlockArgs, reply *CreateNewBlockReply) {
-    // Your code here
+    block := Block{}
+    block.data = args.BlockData
+    block = bc.mine(block)
+    fmt.Printf(block.hash)
+    reply.success = true
 }
 
 //
@@ -114,6 +125,31 @@ func (bc *Blockchain) GetState() (int, string) {
     return size, bc.chains[size-1].hash
 }
 
+func (bc *Blockchain) mine(block Block) (Block) {
+    block.nonce = 0
+    requiredPrefix := strings.Repeat("0", bc.difficulty)
+
+    block.previousHash = bc.chains[len(bc.chains) - 1].hash
+
+    for {
+        blockBinary := []byte(fmt.Sprintf("%s%s%d", block.data, block.previousHash, block.nonce))
+
+        hasher := sha1.New()
+        hasher.Write(blockBinary)
+        hash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+        fmt.Printf("The current hash is %s\n", hash)
+
+        if strings.HasPrefix(hash, requiredPrefix) {
+            block.hash = hash
+            break
+        }
+
+        block.nonce++
+    }
+
+    return block
+}
 func (bc *Blockchain) Listen() {
     for cmd := range bc.commandChannel {
         if cmd == "Broadcast" {
