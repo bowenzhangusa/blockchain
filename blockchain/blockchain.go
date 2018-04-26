@@ -16,11 +16,12 @@ import (
 type Blockchain struct {
     mu             sync.Mutex          // Lock to protect shared access to this peer's state
     peers          []*labrpc.ClientEnd // RPC end points of all peers
-    me             int                 // this peer's index into peers[]
+    me             int                 // this peer's Index into peers[]
 
     chains         []Block         // This represent the entire block chain
     commandChannel chan string     // Channel to listen to broadcast and download command
     difficulty     int             // Difficulty level of the blockchain
+    newBlock       Block           // The newly mined block that has yet to be broadcasted
 }
 
 // the tester calls Kill() when a Blockchain instance won't
@@ -41,12 +42,14 @@ func (bc *Blockchain) createGenesisBlock() {
     // Your code to mine the genesis block.
     // It should be the first block mined by all blockchain peers on starting up.
     block := Block{GENESIS_HASH, "", "first block", 0, time.Now(), 0}
+    bc.mu.Lock()
     bc.chains = append(bc.chains, block)
+    bc.mu.Unlock()
 }
 
 //
 // Tester will invoke CreateNewBlock API on a peer for mining a new block.
-// Tester will provide the Block data.
+// Tester will provide the Block Data.
 //
 type CreateNewBlockArgs struct {
     BlockData    string
@@ -59,9 +62,9 @@ type CreateNewBlockReply struct {
 
 func (bc *Blockchain) CreateNewBlock(args *CreateNewBlockArgs, reply *CreateNewBlockReply) {
     block := Block{}
-    block.data = args.BlockData
+    block.Data = args.BlockData
     block = bc.mine(block)
-    fmt.Printf(block.hash)
+    fmt.Printf("newly mined block has hash %s\n", block.Hash)
     reply.success = true
 }
 
@@ -98,6 +101,65 @@ func (bc *Blockchain) DownloadBlockchainFromPeers() {
 //
 func (bc *Blockchain) BroadcastNewBlock() {
     // Your code here
+    bc.mu.Lock()
+    args := AddBlockArgs{
+        Index:  bc.newBlock.Index,
+        PreviousHash: bc.newBlock.PreviousHash,
+        Timestamp: bc.newBlock.Timestamp,
+        Hash: bc.newBlock.Hash,
+        Data: bc.newBlock.Data,
+        Nonce: bc.newBlock.Nonce,
+    }
+    bc.mu.Unlock()
+    type ResponseMsg struct {
+        AddBlockReply
+        IsOk      bool
+        PeerIndex int
+    }
+
+    responseChan := make(chan ResponseMsg)
+    // send requests concurrently
+    for i, _ := range bc.peers {
+        if i == bc.me {
+            continue
+        }
+
+        go func(peerIndex int) {
+            resp := AddBlockReply{}
+            ok := bc.sendAddBlock(peerIndex, &args, &resp)
+            responseChan <- ResponseMsg{
+                resp,
+                ok,
+                peerIndex,
+            }
+        }(i)
+    }
+
+    // Collect response
+    totalCount := len(bc.peers)
+    currentCount := 1
+    for resp := range responseChan {
+        if resp.AddBlockReply.Approved == false {
+            bc.newBlock = Block{}
+            bc.commandChannel <- "Done"
+            return
+        } else {
+            currentCount++
+            if currentCount == totalCount {
+                bc.chains = append(bc.chains, bc.newBlock)
+                bc.newBlock = Block{}
+                bc.commandChannel <- "Done"
+                return
+            }
+        }
+    }
+}
+
+//
+// Send addBlock request to a particular peer
+func (bc *Blockchain) sendAddBlock(server int, args *AddBlockArgs, reply *AddBlockReply) bool {
+    ok := bc.peers[server].Call("Blockchain.AddBlock", args, reply)
+    return ok
 }
 
 //
@@ -105,47 +167,73 @@ func (bc *Blockchain) BroadcastNewBlock() {
 // to request for adding its newly mined block.
 //
 type AddBlockArgs struct {
-    // Your code here
+    Index           int // index of the new block
+    PreviousHash    string // previous hash
+    Timestamp       time.Time // timestamp for the new block
+    Hash            string // hash for the new block
+    Data            string // block data
+    Nonce           int // block nonce
 }
 
 type AddBlockReply struct {
     // Your code here
+    Approved bool // if the block is approved or not
 }
 
 func (bc *Blockchain) AddBlock(args *AddBlockArgs, reply *AddBlockReply) {
     // Your code here
+    bc.mu.Lock()
+    defer bc.mu.Unlock()
+    length := len(bc.chains)
+    requiredPrefix := strings.Repeat("0", bc.difficulty)
+
+    // Check the three conditions to approve a block
+    if args.Index == length && args.PreviousHash == bc.chains[length-1].Hash && strings.HasPrefix(args.Hash, requiredPrefix) {
+        newBlock := Block{args.Hash, args.PreviousHash, args.Data, args.Index, args.Timestamp, args.Nonce}
+        bc.chains = append(bc.chains, newBlock)
+        reply.Approved = true
+    } else {
+        reply.Approved = false
+    }
 }
 
 //
-// Invoked by tester to get blockchain length and last block's hash.
+// Invoked by tester to get blockchain length and last block's Hash.
 //
 func (bc *Blockchain) GetState() (int, string) {
+    bc.mu.Lock()
     size := len(bc.chains)
+    hash := bc.chains[size-1].Hash
+    bc.mu.Unlock()
 
-    return size, bc.chains[size-1].hash
+    return size, hash
 }
 
 func (bc *Blockchain) mine(block Block) (Block) {
-    block.nonce = 0
+    block.Nonce = 0
     requiredPrefix := strings.Repeat("0", bc.difficulty)
 
-    block.previousHash = bc.chains[len(bc.chains) - 1].hash
+    block.PreviousHash = bc.chains[len(bc.chains) - 1].Hash
 
     for {
-        blockBinary := []byte(fmt.Sprintf("%s%s%d", block.data, block.previousHash, block.nonce))
+        blockBinary := []byte(fmt.Sprintf("%s%s%d", block.Data, block.PreviousHash, block.Nonce))
 
         hasher := sha1.New()
         hasher.Write(blockBinary)
         hash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
 
-        fmt.Printf("The current hash is %s\n", hash)
-
         if strings.HasPrefix(hash, requiredPrefix) {
-            block.hash = hash
+            bc.mu.Lock()
+            block.Hash = hash
+            block.Index = len(bc.chains)
+            block.Timestamp = time.Now()
+            block.PreviousHash = bc.chains[block.Index - 1].Hash
+            bc.newBlock = block
+            bc.mu.Unlock()
             break
         }
 
-        block.nonce++
+        block.Nonce++
     }
 
     return block
@@ -153,7 +241,11 @@ func (bc *Blockchain) mine(block Block) (Block) {
 func (bc *Blockchain) Listen() {
     for cmd := range bc.commandChannel {
         if cmd == "Broadcast" {
-            bc.commandChannel <- "Done"
+            fmt.Printf("received broadcast command from tester\n")
+            if bc.newBlock.Hash != "" {
+                go bc.BroadcastNewBlock()
+                //bc.commandChannel <- "Done"
+            }
         } else if cmd == "DownloadBlockchain"{
             bc.commandChannel <- "Done"
         }

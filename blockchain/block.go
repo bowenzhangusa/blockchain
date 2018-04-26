@@ -6,10 +6,10 @@ const GENESIS_HASH = "816534932c2b7154836da6afc367695e6337db8a921823784c14378abe
 type Block struct {
 
     // Your code here for what goes into a blockchain's block.
-	hash string //the hash value for the block
-	previousHash string // the previous hash
-	data string // data for the current block
-	index int // index of this block in the chain
-	timestamp time.Time // timestamp of the block
-	nonce int // nonce of the block
+	Hash         string    //the Hash value for the block
+	PreviousHash string    // the previous Hash
+	Data         string    // Data for the current block
+	Index        int       // Index of this block in the chain
+	Timestamp    time.Time // Timestamp of the block
+	Nonce        int       // Nonce of the block
 }
