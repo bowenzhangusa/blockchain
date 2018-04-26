@@ -64,7 +64,7 @@ func (bc *Blockchain) CreateNewBlock(args *CreateNewBlockArgs, reply *CreateNewB
     block := Block{}
     block.Data = args.BlockData
     block = bc.mine(block)
-    fmt.Printf("newly mined block has hash %s\n", block.Hash)
+    fmt.Printf("newly mined block by peer %d, has hash %s, timestamp %s, and index %d\n", bc.me, block.Hash, block.Timestamp, block.Index)
     reply.success = true
 }
 
@@ -78,10 +78,21 @@ type DownloadBlockchainArgs struct {
 
 type DownloadBlockchainReply struct {
     // Your code here
+    Chains []Block
+}
+
+//
+// Send addBlock request to a particular peer
+func (bc *Blockchain) sendDownloadBlockchain(server int, args *DownloadBlockchainArgs, reply *DownloadBlockchainReply) bool {
+    ok := bc.peers[server].Call("Blockchain.DownloadBlockchain", args, reply)
+    return ok
 }
 
 func (bc *Blockchain) DownloadBlockchain(args *DownloadBlockchainArgs, reply *DownloadBlockchainReply) {
     // Your code here
+    bc.mu.Lock()
+    reply.Chains = bc.chains
+    bc.mu.Unlock()
 }
 
 //
@@ -91,6 +102,59 @@ func (bc *Blockchain) DownloadBlockchain(args *DownloadBlockchainArgs, reply *Do
 func (bc *Blockchain) DownloadBlockchainFromPeers() {
 
     // Your code here
+    args := DownloadBlockchainArgs{}
+    type ResponseMsg struct {
+        DownloadBlockchainReply
+        IsOk      bool
+        PeerIndex int
+    }
+
+    responseChan := make(chan ResponseMsg)
+    // Send request concurrently
+    for i, _ := range bc.peers {
+        if i == bc.me {
+            continue
+        }
+
+        go func(peerIndex int) {
+            resp := DownloadBlockchainReply{}
+            ok := bc.sendDownloadBlockchain(peerIndex, &args, &resp)
+            responseChan <- ResponseMsg{
+                resp,
+                ok,
+                peerIndex,
+            }
+        }(i)
+    }
+
+    // collect response
+    maxLen := 1
+    maxChain := []Block{}
+    minTimestamp := time.Now()
+    totalCount := len(bc.peers)
+    currentCount := 1
+    for resp := range responseChan {
+        currentCount++
+        currentChain := resp.Chains
+        currentLen := len(currentChain)
+        currentTime := currentChain[currentLen-1].Timestamp
+        if currentLen > maxLen {
+            maxLen = currentLen
+            maxChain = currentChain
+            minTimestamp = currentTime
+        } else if currentLen == maxLen && currentTime.Before(minTimestamp) {
+            maxChain = currentChain
+            minTimestamp = currentTime
+        }
+
+        if currentCount == totalCount {
+            bc.mu.Lock()
+            bc.chains = maxChain
+            bc.mu.Unlock()
+            bc.commandChannel <- "Done"
+            return
+        }
+    }
 }
 
 //
@@ -141,13 +205,24 @@ func (bc *Blockchain) BroadcastNewBlock() {
     for resp := range responseChan {
         if resp.AddBlockReply.Approved == false {
             bc.newBlock = Block{}
-            bc.commandChannel <- "Done"
+            go bc.DownloadBlockchainFromPeers()
             return
         } else {
             currentCount++
             if currentCount == totalCount {
-                bc.chains = append(bc.chains, bc.newBlock)
+                fmt.Printf("node %d received all approval\n", bc.me)
                 bc.newBlock = Block{}
+                bc.mu.Lock()
+                if bc.newBlock.Index == len(bc.chains) {
+                    bc.chains = append(bc.chains, bc.newBlock)
+                    bc.mu.Unlock()
+                } else {
+                    // This happens when the node accepts another peer's mined block
+                    bc.mu.Unlock()
+                    go bc.DownloadBlockchainFromPeers()
+                    return
+                }
+
                 bc.commandChannel <- "Done"
                 return
             }
@@ -210,6 +285,8 @@ func (bc *Blockchain) GetState() (int, string) {
 }
 
 func (bc *Blockchain) mine(block Block) (Block) {
+    bc.mu.Lock()
+    defer bc.mu.Unlock()
     block.Nonce = 0
     requiredPrefix := strings.Repeat("0", bc.difficulty)
 
@@ -223,13 +300,13 @@ func (bc *Blockchain) mine(block Block) (Block) {
         hash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
 
         if strings.HasPrefix(hash, requiredPrefix) {
-            bc.mu.Lock()
+            //bc.mu.Lock()
             block.Hash = hash
             block.Index = len(bc.chains)
             block.Timestamp = time.Now()
             block.PreviousHash = bc.chains[block.Index - 1].Hash
             bc.newBlock = block
-            bc.mu.Unlock()
+            //bc.mu.Unlock()
             break
         }
 
@@ -247,7 +324,8 @@ func (bc *Blockchain) Listen() {
                 //bc.commandChannel <- "Done"
             }
         } else if cmd == "DownloadBlockchain"{
-            bc.commandChannel <- "Done"
+            fmt.Printf("received download command from tester\n")
+            go bc.DownloadBlockchainFromPeers()
         }
     }
 }
