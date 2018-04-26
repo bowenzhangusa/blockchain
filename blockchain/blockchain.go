@@ -137,6 +137,10 @@ func (bc *Blockchain) DownloadBlockchainFromPeers() {
         currentCount++
         currentChain := resp.Chains
         currentLen := len(currentChain)
+        if resp.IsOk == false || currentLen == 0 {
+            continue
+        }
+        fmt.Printf("current chain length is %d from peer %d\n", currentLen, resp.PeerIndex)
         currentTime := currentChain[currentLen-1].Timestamp
         if currentLen > maxLen {
             maxLen = currentLen
@@ -190,6 +194,7 @@ func (bc *Blockchain) BroadcastNewBlock() {
 
         go func(peerIndex int) {
             resp := AddBlockReply{}
+            resp.Approved = true
             ok := bc.sendAddBlock(peerIndex, &args, &resp)
             responseChan <- ResponseMsg{
                 resp,
@@ -211,13 +216,14 @@ func (bc *Blockchain) BroadcastNewBlock() {
             currentCount++
             if currentCount == totalCount {
                 fmt.Printf("node %d received all approval\n", bc.me)
-                bc.newBlock = Block{}
                 bc.mu.Lock()
                 if bc.newBlock.Index == len(bc.chains) {
                     bc.chains = append(bc.chains, bc.newBlock)
+                    bc.newBlock = Block{}
                     bc.mu.Unlock()
                 } else {
                     // This happens when the node accepts another peer's mined block
+                    bc.newBlock = Block{}
                     bc.mu.Unlock()
                     go bc.DownloadBlockchainFromPeers()
                     return
