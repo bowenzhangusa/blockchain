@@ -128,9 +128,11 @@ func (bc *Blockchain) DownloadBlockchainFromPeers() {
     }
 
     // collect response
-    maxLen := 1
-    maxChain := []Block{}
-    minTimestamp := time.Now()
+    bc.mu.Lock()
+    maxChain := bc.chains
+    maxLen := len(bc.chains)
+    minTimestamp := bc.chains[maxLen-1].Timestamp
+    bc.mu.Unlock()
     totalCount := len(bc.peers)
     currentCount := 1
     for resp := range responseChan {
