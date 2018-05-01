@@ -6,8 +6,8 @@ import "time"
 import (
     "fmt"
     "strings"
-    "crypto/sha1"
     "encoding/base64"
+    "crypto/sha256"
 )
 
 //
@@ -22,6 +22,7 @@ type Blockchain struct {
     commandChannel chan string     // Channel to listen to broadcast and download command
     difficulty     int             // Difficulty level of the blockchain
     newBlock       Block           // The newly mined block that has yet to be broadcasted
+    prefix string                  // a prefix that every hash must contain
 }
 
 // the tester calls Kill() when a Blockchain instance won't
@@ -268,11 +269,22 @@ func (bc *Blockchain) AddBlock(args *AddBlockArgs, reply *AddBlockReply) {
     bc.mu.Lock()
     defer bc.mu.Unlock()
     length := len(bc.chains)
-    requiredPrefix := strings.Repeat("0", bc.difficulty)
+	newBlock := Block{
+		args.Hash,
+		args.PreviousHash,
+		args.Data,
+		args.Index,
+		args.Timestamp,
+		args.Nonce,
+	}
 
-    // Check the three conditions to approve a block
-    if args.Index == length && args.PreviousHash == bc.chains[length-1].Hash && strings.HasPrefix(args.Hash, requiredPrefix) {
-        newBlock := Block{args.Hash, args.PreviousHash, args.Data, args.Index, args.Timestamp, args.Nonce}
+	// Check the all conditions to approve a block
+	isValid := args.Index == length &&
+		args.PreviousHash == bc.chains[length-1].Hash &&
+		strings.HasPrefix(args.Hash, bc.prefix) &&
+		newBlock.Hash == bc.getBlockHash(newBlock)
+
+    if isValid {
         bc.chains = append(bc.chains, newBlock)
         reply.Approved = true
     } else {
@@ -292,29 +304,36 @@ func (bc *Blockchain) GetState() (int, string) {
     return size, hash
 }
 
+func (bc *Blockchain) getBlockHash(block Block) string {
+	blockBinary := []byte(
+		fmt.Sprintf("%s%s%d%d%d",
+			block.Data,
+			block.PreviousHash,
+			block.Nonce),
+	)
+
+	hasher := sha256.New()
+	hasher.Write(blockBinary)
+	hash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+
+	return hash
+}
+
 func (bc *Blockchain) mine(block Block) (Block) {
     bc.mu.Lock()
     defer bc.mu.Unlock()
     block.Nonce = 0
-    requiredPrefix := strings.Repeat("0", bc.difficulty)
 
     block.PreviousHash = bc.chains[len(bc.chains) - 1].Hash
 
     for {
-        blockBinary := []byte(fmt.Sprintf("%s%s%d", block.Data, block.PreviousHash, block.Nonce))
+    	hash := bc.getBlockHash(block)
 
-        hasher := sha1.New()
-        hasher.Write(blockBinary)
-        hash := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
-
-        if strings.HasPrefix(hash, requiredPrefix) {
-            //bc.mu.Lock()
+        if strings.HasPrefix(hash, bc.prefix) {
             block.Hash = hash
             block.Index = len(bc.chains)
             block.Timestamp = time.Now()
-            block.PreviousHash = bc.chains[block.Index - 1].Hash
             bc.newBlock = block
-            //bc.mu.Unlock()
             break
         }
 
@@ -323,13 +342,13 @@ func (bc *Blockchain) mine(block Block) (Block) {
 
     return block
 }
+
 func (bc *Blockchain) Listen() {
     for cmd := range bc.commandChannel {
         if cmd == "Broadcast" {
             fmt.Printf("received broadcast command from tester\n")
             if bc.newBlock.Hash != "" {
                 go bc.BroadcastNewBlock()
-                //bc.commandChannel <- "Done"
             }
         } else if cmd == "DownloadBlockchain"{
             fmt.Printf("received download command from tester\n")
@@ -357,6 +376,7 @@ func Make(peers []*labrpc.ClientEnd, me int, difficulty int, command chan string
     bc.difficulty = difficulty
     bc.commandChannel = command
     bc.chains = [] Block{}
+	bc.prefix = strings.Repeat("0", bc.difficulty)
     bc.createGenesisBlock()
     go bc.Listen()
     return bc
